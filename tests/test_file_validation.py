@@ -556,6 +556,88 @@ def test_ancillary_file_path():
     assert ancillary_file.is_valid_for_start_date(datetime(2021, 1, 2))
     assert not ancillary_file.is_valid_for_start_date(datetime(2021, 1, 3))
 
+    # An ancillary file with no repointing has repointing == None
+    assert ancillary_file.repointing is None
+
+
+def test_ancillary_file_path_repointing():
+    """Tests repointing support in the ancillary date field."""
+
+    # Parse a repointing embedded in the date field (the GLOWS L3e case)
+    anc_file = (
+        "imap_glows_survival-probability-hi-45-raw_20260407-repoint12345_v012.dat"
+    )
+    ancillary_file = AncillaryFilePath(anc_file)
+    assert ancillary_file.descriptor == "survival-probability-hi-45-raw"
+    assert ancillary_file.start_date == "20260407"
+    # The repointing is returned as an integer
+    assert ancillary_file.repointing == 12345
+    assert ancillary_file.end_date is None
+
+    # Round-trip: generate from an int repointing reproduces the filename
+    generated = AncillaryFilePath.generate_from_inputs(
+        instrument="glows",
+        descriptor="survival-probability-hi-45-raw",
+        start_time="20260407",
+        version="v012",
+        extension="dat",
+        repointing=12345,
+    )
+    assert generated.filename.name == anc_file
+    assert generated.repointing == 12345
+    expected_output = imap_data_access.config["DATA_DIR"] / Path(
+        "imap/ancillary/glows/" + anc_file
+    )
+    assert generated.construct_path() == expected_output
+
+    # A "repointXXXXX" string is also accepted for repointing
+    generated_str = AncillaryFilePath.generate_from_inputs(
+        instrument="glows",
+        descriptor="foo-raw",
+        start_time="20260407",
+        version="v001",
+        extension="dat",
+        repointing="repoint00042",
+    )
+    assert (
+        generated_str.filename.name
+        == "imap_glows_foo-raw_20260407-repoint00042_v001.dat"
+    )
+    assert generated_str.repointing == 42
+
+    # end_date and repointing are mutually exclusive: a filename carrying both
+    # does not match the pattern and is rejected.
+    with pytest.raises(AncillaryFilePath.InvalidImapFileError):
+        AncillaryFilePath("imap_glows_foo-raw_20260407_20260410-repoint00042_v001.dat")
+
+    # generate_from_inputs likewise refuses both at once.
+    with pytest.raises(AncillaryFilePath.InvalidImapFileError):
+        AncillaryFilePath.generate_from_inputs(
+            instrument="glows",
+            descriptor="foo-raw",
+            start_time="20260407",
+            end_time="20260410",
+            version="v001",
+            extension="dat",
+            repointing=42,
+        )
+
+    # A malformed (non-int, non-"repointXXXXX") repointing is rejected
+    with pytest.raises(AncillaryFilePath.InvalidImapFileError):
+        AncillaryFilePath.generate_from_inputs(
+            instrument="glows",
+            descriptor="foo-raw",
+            start_time="20260407",
+            version="v001",
+            extension="dat",
+            repointing="bad",
+        )
+
+    # A repointing that is not exactly 5 digits does not match the pattern and
+    # is instead treated as part of the (invalid) filename
+    with pytest.raises(AncillaryFilePath.InvalidImapFileError):
+        AncillaryFilePath("imap_glows_foo-raw_20260407-repoint123_v001.dat")
+
 
 def test_deprecated_data_dir():
     """Tests the deprecated data directory."""

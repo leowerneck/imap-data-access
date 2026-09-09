@@ -1,4 +1,5 @@
 """Methods for managing and validating filenames and filepaths."""
+
 # ruff: noqa: PLR0913
 
 from __future__ import annotations
@@ -435,10 +436,10 @@ class ScienceFilePath(ImapFilePath):
             extension = "pkts"
         time_field = start_time
         if repointing is not None:
-            if ScienceFilePath.is_valid_repointing(repointing):
-                time_field += f"-{repointing}"
-            elif isinstance(repointing, int):
+            if isinstance(repointing, int):
                 time_field += f"-repoint{repointing:05d}"
+            elif ScienceFilePath.is_valid_repointing(repointing):
+                time_field += f"-{repointing}"
             if cr:
                 raise ImapFilePath.InvalidImapFileError(
                     "Only one of CR or repointing can be included."
@@ -1019,7 +1020,7 @@ class AncillaryFilePath(ImapFilePath):
 
     FILENAME_CONVENTION = (
         "<mission>_<instrument>_<description>_"
-        "<start_date>(_<end_date>)_<version>.<extension>"
+        "<start_date>(_<end_date>)(-<repointing>)_<version>.<extension>"
     )
     VALID_VERSION_PATTERN: typing.ClassVar[str] = Version.minor_only_version_pattern
     VALID_EXTENSIONS: typing.ClassVar[set[str]] = {
@@ -1047,20 +1048,24 @@ class AncillaryFilePath(ImapFilePath):
         path is set by the "IMAP_DATA_DIR" environment variable, or defaults to "data/"
 
         Current filename convention:
-        "<mission>_<instrument>_<descriptor>_<start_date>(_<end_date>)_
+        "<mission>_<instrument>_<descriptor>_<start_date>(_<end_date>)(-<repointing>)_
         <version>.<extension>"
 
         <mission>: imap
         <instrument>: codice, glows, hi, hit, idex, lo, mag, swapi, swe, ultra
         <descriptor>: A descriptive name for the ancillary file which
-                       distinguishes between other ancillary files used by the
-                       instrument.
+                      distinguishes between other ancillary files used by the
+                      instrument.
         <start_date>: startdate is the earliest date where the file is valid,
-                     format: YYYYMMDD
+                      format: YYYYMMDD
         <end_date>: The end time of the validity of the ancillary file,
                     in the format “YYYYMMDD”. This is optional for files, with the
                     understanding that if end_date is not provided, the file is valid
-                    until a file with a later start_date and no end_date.
+                    until a file with a later start_date and no end_date. If this
+                    field is provided, then the <repointing> is not allowed.
+        <repointing>: This is an optional field. If this field is provided, then
+                      the <end_date> field is not allowed. It is used to indicate
+                      which repointing the data is from, format: repointXXXXX
         <version>: This stores the data version for this product, format: vXXX
 
         Parameters
@@ -1083,6 +1088,7 @@ class AncillaryFilePath(ImapFilePath):
         self.descriptor = split_filename["descriptor"]
         self.start_date = split_filename["start_date"]
         self.end_date = split_filename["end_date"]
+        self.repointing = split_filename["repointing"]
         self.version = split_filename["version"]
         self.extension = split_filename["extension"]
 
@@ -1099,6 +1105,7 @@ class AncillaryFilePath(ImapFilePath):
         extension: str,
         start_time: str,
         end_time: str | None = None,
+        repointing: int | str | None = None,
     ) -> AncillaryFilePath:
         """Generate filename from given inputs and return a AncillaryFilePath instance.
 
@@ -1126,21 +1133,34 @@ class AncillaryFilePath(ImapFilePath):
             The end time for the filename. If not provided,
             the file is valid until a file with a later
             start_date and no end_date.
+        repointing : int or str, optional
+            The repointing number for this file. Used to distinguish files from
+            different repointings on the same start_date. Should be either an
+            integer like 12345 or a string like "repoint12345". Appended to the
+            start_time with a '-' separator.
 
         Returns
         -------
         str
             The generated filename
         """
+        time_field = start_time
+        if end_time and repointing:
+            raise ImapFilePath.InvalidImapFileError(
+                "Only one of end_time or repointing can be included."
+            )
         if end_time:
-            filename = (
-                f"imap_{instrument}_{descriptor}_{start_time}_{end_time}_"
-                f"{version}.{extension}"
-            )
-        else:
-            filename = (
-                f"imap_{instrument}_{descriptor}_{start_time}_{version}.{extension}"
-            )
+            time_field += f"_{end_time}"
+        elif repointing:
+            if isinstance(repointing, int):
+                time_field += f"-repoint{repointing:05d}"
+            elif ScienceFilePath.is_valid_repointing(repointing):
+                time_field += f"-{repointing}"
+            else:
+                raise ImapFilePath.InvalidImapFileError(
+                    "The repointing should be an integer or a 'repointXXXXX' string."
+                )
+        filename = f"imap_{instrument}_{descriptor}_{time_field}_{version}.{extension}"
         return cls(filename)
 
     def validate_filename(self) -> str:
@@ -1189,6 +1209,9 @@ class AncillaryFilePath(ImapFilePath):
         if not ScienceFilePath.is_valid_date(self.start_date):
             error_message += "Invalid start date format. Please use YYYYMMDD format. \n"
 
+        if self.repointing is not None and not isinstance(self.repointing, int):
+            error_message += "The repointing number should be an integer.\n"
+
         if self.end_date:
             if not ScienceFilePath.is_valid_date(self.end_date):
                 error_message += (
@@ -1218,7 +1241,7 @@ class AncillaryFilePath(ImapFilePath):
         """Extract all components from filename. Does not validate instrument or level.
 
         Will return a dictionary with the following keys:
-        { instrument, descriptor, start_date, end_date, version, extension }
+        { instrument, descriptor, start_date, end_date, repointing, version, extension }
 
         If a match is not found, a ValueError will be raised.
 
@@ -1244,7 +1267,8 @@ class AncillaryFilePath(ImapFilePath):
             r"(?P<instrument>[^_]+)_"
             r"(?P<descriptor>[^_]+)_"
             r"(?P<start_date>\d{8})"
-            r"(_(?P<end_date>\d{8}))?"  # Optional end_date
+            # Optional end_date or repointing (mutually exclusive)
+            r"(?:_(?P<end_date>\d{8})|-repoint(?P<repointing>\d{5}))?"
             rf"_(?P<version>{cls.VALID_VERSION_PATTERN})"
             rf"\.(?P<extension>{extension_regex})$"
         )
@@ -1259,6 +1283,9 @@ class AncillaryFilePath(ImapFilePath):
             )
 
         components = match.groupdict()
+        # We want the repointing number as an integer (or None if absent)
+        if components["repointing"] is not None:
+            components["repointing"] = int(components["repointing"])
         return components
 
     def is_valid_for_start_date(self, start_date: datetime) -> bool:
