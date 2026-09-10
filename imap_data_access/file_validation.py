@@ -1145,13 +1145,13 @@ class AncillaryFilePath(ImapFilePath):
             The generated filename
         """
         time_field = start_time
-        if end_time and repointing:
+        if end_time is not None and repointing is not None:
             raise ImapFilePath.InvalidImapFileError(
                 "Only one of end_time or repointing can be included."
             )
-        if end_time:
+        if end_time is not None:
             time_field += f"_{end_time}"
-        elif repointing:
+        elif repointing is not None:
             if isinstance(repointing, int):
                 time_field += f"-repoint{repointing:05d}"
             elif ScienceFilePath.is_valid_repointing(repointing):

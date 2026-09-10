@@ -605,6 +605,21 @@ def test_ancillary_file_path_repointing():
     )
     assert generated_str.repointing == 42
 
+    # repointing=0 is a valid 5-digit repointing, so let's test it here
+    generated_zero = AncillaryFilePath.generate_from_inputs(
+        instrument="glows",
+        descriptor="foo-raw",
+        start_time="20260407",
+        version="v001",
+        extension="dat",
+        repointing=0,
+    )
+    assert (
+        generated_zero.filename.name
+        == "imap_glows_foo-raw_20260407-repoint00000_v001.dat"
+    )
+    assert generated_zero.repointing == 0
+
     # end_date and repointing are mutually exclusive: a filename carrying both
     # does not match the pattern and is rejected.
     with pytest.raises(AncillaryFilePath.InvalidImapFileError):
