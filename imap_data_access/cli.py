@@ -286,6 +286,7 @@ def _query_parser(args: argparse.Namespace):
                 "descriptor": file_path.descriptor,
                 "start_date": file_path.start_date,
                 "end_date": file_path.end_date,
+                "repointing": file_path.repointing,
                 "version": file_path.version,
                 "extension": file_path.extension,
             }
